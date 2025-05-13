@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "682218916819",
+    "project_id": "epath-fe8c1",
+    "storage_bucket": "epath-fe8c1.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:682218916819:android:95b9f5ba12f0663deabd26",
+        "android_client_info": {
+          "package_name": "in.epathtracking"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDo9W_woHYk05zbfVczkSjftdLCFJ4sIUo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
