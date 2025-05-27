@@ -123,6 +123,8 @@ const DriverMovement = (props: Props) => {
   const [isDatePickerVisible, setDatePickerVisibility] = useState(false);
   const [places, setPlaces] = useState<any>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  const [isWebSocketConnected, setIsWebSocketConnected] = useState(false);
   const [jnTooltipData, setJnTooltipData] = useState<any>(null);
   const [isSpeedAlertOpen, setIsSpeedAlertOpen] = useState(false);
   const [isSpeedSOSOpen, setIsSpeedSOSOpen] = useState(false);
@@ -605,329 +607,241 @@ const DriverMovement = (props: Props) => {
   }, [currentMovement.current]);
 
   // ✅ Offline stored locations ko bheje jab internet aaye
-  const sendOfflineStoredLocations = async () => {
-    try {
-      let offlineData = await AsyncStorage.getItem(asyncKeys.offlineLocations);
-      let offlineDataTime = await AsyncStorage.getItem(
-        asyncKeys.offlineLocationsTime
-      );
-      const storedId = await getAsyncAttendanceIDs();
-      const getLocationData = await getAsyncLocation();
-      let locations = offlineData ? JSON.parse(offlineData) : [];
-      let locationsTime = offlineDataTime ? JSON.parse(offlineDataTime) : [];
+// ...existing code...
+const sendOfflineStoredLocations = async () => {
+  try {
+    let offlineData = await AsyncStorage.getItem(asyncKeys.offlineLocations);
+    let offlineDataTime = await AsyncStorage.getItem(asyncKeys.offlineLocationsTime);
+    const storedId = await getAsyncAttendanceIDs();
+    const getLocationData = await getAsyncLocation();
+    let locations = offlineData ? JSON.parse(offlineData) : [];
+    let locationsTime = offlineDataTime ? JSON.parse(offlineDataTime) : {};
 
-      if (
-        locations.length > 0 &&
-        socketRef.current &&
-        socketRef.current.readyState === WebSocket.OPEN
-      ) {
-        let new_routes_list = newRoutesObjectRef?.current?.route?.map(
-          (i: any) => {
-            return { lat: i?.latitude, lng: i?.longitude };
-          }
-        );
+    // Merge in-memory coordinates with offline stored ones
+    const inMemoryLocations = actualCompletedRouteRef.current.map((coord: latLongProps) => ({
+      lat: Number(coord.latitude),
+      lng: Number(coord.longitude),
+    }));
 
-        const data = {
-          type: "POST",
-          movement_id: storedId,
-          current_lat:
-            Number(getLocationData?.latitude) ||
-            Number(getCurrentLocation?.latitude),
-          current_lng:
-            Number(getLocationData?.longitude) ||
-            Number(getCurrentLocation?.longitude),
-          sos: "no",
-          new_routes: JSON.stringify({
-            ...newRoutesObjectRef.current,
-            route: new_routes_list,
-          }),
-          movement_status: currentMovement?.current?.movement_status,
-          actual_poly_coordinatess: JSON.stringify(locations),
-          actual_poly_coordinatess_timestamp: JSON.stringify(locationsTime),
-        };
-        const jsonData = JSON.stringify(data);
-        socketRef.current.send(jsonData);
-        console.log("📤 Sent offline location:", JSON.stringify(data));
-        await AsyncStorage.removeItem(asyncKeys.offlineLocations); // Data successfully send hone ke baad clear kare
-      }
-    } catch (error) {
-      console.error("❌ Error sending offline locations:", error);
+    // Combine and remove duplicates if needed
+    const mergedLocations = [...locations, ...inMemoryLocations];
+
+    if (
+      mergedLocations.length > 0 &&
+      socketRef.current &&
+      socketRef.current.readyState === WebSocket.OPEN
+    ) {
+      let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
+        lat: i?.latitude,
+        lng: i?.longitude,
+      }));
+
+      const data = {
+        type: "POST",
+        movement_id: storedId,
+        current_lat: Number(getLocationData?.latitude) || Number(getCurrentLocation?.latitude),
+        current_lng: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
+        sos: "no",
+        new_routes: JSON.stringify({
+          ...newRoutesObjectRef.current,
+          route: new_routes_list,
+        }),
+        movement_status: currentMovement?.current?.movement_status,
+        actual_poly_coordinatess: JSON.stringify(mergedLocations),
+        actual_poly_coordinatess_timestamp: JSON.stringify(locationsTime),
+      };
+      const jsonData = JSON.stringify(data);
+      socketRef.current.send(jsonData);
+      console.log("📤 Sent merged offline + in-memory locations:", jsonData);
+
+      // Clear both after successful send
+      await AsyncStorage.removeItem(asyncKeys.offlineLocations);
+      await AsyncStorage.removeItem(asyncKeys.offlineLocationsTime);
     }
-  };
+  } catch (error) {
+    console.error("❌ Error sending offline locations:", error);
+  }
+};
+// ...existing code...
 
-  const openSocketConnection = () => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+// const openSocketConnection = () => {
+//   if (socketRef.current) {
+//     if (socketRef.current.readyState === WebSocket.OPEN) {
+//       console.log("WebSocket already connected");
+//       return;
+//     }
+//     if (socketRef.current.readyState === WebSocket.CONNECTING) {
+//       console.log("WebSocket is connecting, waiting to close...");
+//       socketRef.current.onclose = () => {
+//         console.log("Closed stuck connecting socket, now reopening...");
+//         socketRef.current = null;
+//         openSocketConnection();
+//       };
+//       try {
+//         socketRef.current.close();
+//       } catch (e) {
+//         console.log("Error closing stuck socket:", e);
+//         socketRef.current = null;
+//         openSocketConnection();
+//       }
+//       return;
+//     }
+//   }
+
+//   // Now safe to create a new socket
+//   socketRef.current = new WebSocket(socketEndpoint);
+
+//   socketRef.current.onopen = () => {
+//     console.log("SOCKET OPENED");
+//     setIsWebSocketConnected(true);
+//     sendOfflineStoredLocations();
+//     isCheckSocketIsConneted.current = true;
+//   };
+
+//   socketRef.current.onclose = async () => {
+//     console.log("SOCKET CLOSED");
+//     setIsWebSocketConnected(false);
+//     isCheckSocketIsConneted.current = false;
+//     const storedId = await getAsyncAttendanceIDs();
+//     if (storedId) {
+//       setTimeout(() => {
+//         openSocketConnection();
+//       }, 1000);
+//     }
+//   };
+
+//   socketRef.current.onerror = (error) => {
+//     console.error("WebSocket error:", error);
+//   };
+// };
+
+const recalculateJunctionETAs = () => {
+  // Get route and planned start time
+
+  console.log("Recalculating junction ETAs...");
+  
+  const route =
+    currentMovement?.current?.expected_poly_coordinates
+      ? JSON.parse(currentMovement.current.expected_poly_coordinates).map(
+          (coord) => ({
+            latitude: coord.lat,
+            longitude: coord.lng,
+          })
+        )
+      : [];
+  const plannedStartTime = moment().tz("Asia/Kolkata", true); // Use actual start time
+
+  // Get total route distance
+  let totalDistance = 0;
+  let distances = [0];
+  for (let i = 1; i < route.length; i++) {
+    const prev = route[i - 1];
+    const curr = route[i];
+    const d = getDistanceByMeter(prev.latitude, prev.longitude, curr.latitude, curr.longitude);
+    totalDistance += d;
+    distances.push(totalDistance);
+  }
+
+  // Get total duration in seconds
+  let durationStr = currentMovement?.current?.estimated_travel_time || "00:00:00";
+  let [h, m, s] = durationStr.split(":").map(Number);
+  let totalDuration = h * 3600 + m * 60 + s;
+
+  // Update ETA for each place
+  const updatedPlaces = places.map((place) => {
+    // Find nearest point on route
+    let minIdx = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < route.length; i++) {
+      const d = getDistanceByMeter(place.latitude, place.longitude, route[i].latitude, route[i].longitude);
+      if (d < minDist) {
+        minDist = d;
+        minIdx = i;
+      }
+    }
+    const prop = distances[minIdx] / totalDistance;
+    const etaSeconds = Math.round(totalDuration * prop);
+    const eta = plannedStartTime.clone().add(etaSeconds, "seconds").format("MMM D, YYYY h:mm A");
+    return { ...place, eta };
+  });
+
+  setPlaces(updatedPlaces);
+};
+
+
+
+// ...existing code...
+
+let reconnectAttempts = 0;
+let reconnectTimeout: NodeJS.Timeout | null = null;
+
+const MAX_RECONNECT_ATTEMPTS = 10;
+const BASE_RECONNECT_DELAY = 1000; // 1 second
+
+const openSocketConnection = () => {
+  if (socketRef.current) {
+    if (socketRef.current.readyState === WebSocket.OPEN) {
       console.log("WebSocket already connected");
+      reconnectAttempts = 0;
       return;
     }
-
-    socketRef.current = new WebSocket(socketEndpoint);
-
-    socketRef.current.onopen = () => {
-      // onDisplayNotification({
-      //   collapseKey: "in.epathtracking",
-      //   data: {
-      //     movement_id: "1399",
-      //   },
-      //   from: "682218916819",
-      //   messageId: "0:1746168764061404%d1d601b8d1d601b8",
-      //   notification: {
-      //     android: {},
-      //     body: "SOCKET OPENED",
-      //     title: "WebSocket SOCKET OPENED!",
-      //   },
-      //   originalPriority: 2,
-      //   priority: 2,
-      //   sentTime: 1746168764052,
-      //   ttl: 2419200,
-      // });
-      console.log("SOCKET OPENED");
-      sendOfflineStoredLocations();
-      isCheckSocketIsConneted.current = true;
-    };
-
-    socketRef.current.onclose = async (event: any) => {
-      console.log("SOCKET CLOSED");
-      isCheckSocketIsConneted.current = false;
-      const storedId = await getAsyncAttendanceIDs();
-      if (storedId) {
-        setTimeout(() => {
-          openSocketConnection();
-        }, 1000);
+    if (socketRef.current.readyState === WebSocket.CONNECTING) {
+      console.log("WebSocket is connecting, waiting to close...");
+      socketRef.current.onclose = () => {
+        console.log("Closed stuck connecting socket, now reopening...");
+        socketRef.current = null;
+        openSocketConnection();
+      };
+      try {
+        socketRef.current.close();
+      } catch (e) {
+        console.log("Error closing stuck socket:", e);
+        socketRef.current = null;
+        openSocketConnection();
       }
-    };
+      return;
+    }
+  }
 
-    socketRef.current.onmessage = async (event: any) => {
-      const receivedData = JSON.parse(event.data);
-      console.log("====================================");
-      console.log("receivedData", receivedData);
-      console.log("====================================");
-      const storedId = await getAsyncAttendanceIDs();
-      if (storedId) {
-        if (!receivedData?.data_received) {
-          if (appStateVisible == "active") {
-            storedId && onReStartApp();
-          } else {
-            onDisplayNotification({
-              collapseKey: "in.epathtracking",
-              data: {
-                movement_id: storedId,
-              },
-              from: "682218916819",
-              messageId: "0:1746168764061404%d1d601b8d1d601b8",
-              notification: {
-                android: {},
-                body: "Location Data is not being sent",
-                title: "WebSocket error!",
-              },
-              originalPriority: 2,
-              priority: 2,
-              sentTime: 1746168764052,
-              ttl: 2419200,
-            });
-          }
-        }
-        if (receivedData?.close_movement) {
-          if (Platform.OS == "ios") {
-            socketRef.current.close();
-            removeAsyncAttendanceIDs();
-            LocationManagerModule.stopLocationSharing();
-            BackgroundTimer.stopBackgroundTimer();
-            // await BackgroundService.stop();
-          }
-          if (Platform.OS == "android") {
-            socketRef.current.close();
-            // setAsyncAttendanceIDs(null);
-            removeAsyncAttendanceIDs();
-            if (subscription) {
-              subscription.remove();
-              subscription = null;
-            }
-            LocationModule.stopListening();
-            NativeModules.LocationModule.stopLocation();
-            // Stop Background Timer after 10 seconds
-            BackgroundTimer.stopBackgroundTimer();
-          }
-        }
-      }
+  // Prevent multiple reconnect timers
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
 
-      if (currentMovement?.current?.status !== "ongoing") {
-        let expected_poly_coordinates_list = JSON.parse(
-          currentMovement?.current?.expected_poly_coordinates
-        ).map((point: { lat: number; lng: number }) => ({
-          latitude: point.lat,
-          longitude: point.lng,
-        }));
+  // Now safe to create a new socket
+  socketRef.current = new WebSocket(socketEndpoint);
 
-        const tempCurrentRoute = newRouteisDoneRef.current
-          ? currenctNewVehicleRoute
-          : expected_poly_coordinates_list;
-
-        const newLocation = {
-          latitude: receivedData.data.current_lat,
-          longitude: receivedData.data.current_lng,
-        };
-
-        const finalNewPosition = findingCurrentLocationOnRoute(
-          newLocation,
-          tempCurrentRoute
-        );
-        setCurrentLocation(finalNewPosition || newLocation);
-
-        if (receivedData?.data?.new_routes) {
-          let new_routes_list = JSON.parse(
-            receivedData?.data?.new_routes
-          )?.route.map((point: { lat: number; lng: number }) => ({
-            latitude: point.lat,
-            longitude: point.lng,
-          }));
-          newRoutesObjectRef.current = {
-            route: new_routes_list,
-            distance: receivedData?.data?.new_routes.travel_distance,
-            duration: receivedData?.data?.new_routes.estimated_travel_time,
-            endTime: receivedData?.data?.new_routes.planned_end_time,
-            places: receivedData?.data?.new_routes.junction_eta,
-          };
-        }
-        if (receivedData?.data?.movement_status == "Stop") {
-          BackgroundTimer.stopBackgroundTimer();
-          socketRef.current.close();
-          isCheckSocketIsConneted.current = false;
-          if (Platform.OS == "ios") {
-            LocationManagerModule.stopLocationSharing();
-          } else {
-            if (subscription) {
-              subscription.remove();
-              subscription = null;
-            }
-            LocationModule.stopListening();
-            NativeModules.LocationModule.stopLocation();
-          }
-          Alert.alert("", "Your movement has been Ended", [
-            {
-              text: "Ok",
-              onPress: () => navigation.goBack(),
-            },
-          ]);
-        }
-
-        if (receivedData?.data?.actual_poly_coordinatess) {
-          let actual_poly_coordinatess_list = JSON.parse(
-            receivedData?.data?.actual_poly_coordinatess
-          ).map((point: { lat: number; lng: number }) => ({
-            latitude: point.lat,
-            longitude: point.lng,
-          }));
-          setCompletedPath(actual_poly_coordinatess_list);
-          actualCompletedRouteRef.current = actual_poly_coordinatess_list;
-        }
-
-        if (user != "pilot" && receivedData.data?.trigger === "yes") {
-          if (receivedData.data?.alert_msg && receivedData.data?.trigger) {
-            let tempAlert = receivedData.data?.alert_msg;
-            if (tempAlert.length) {
-              let location = tempAlert[tempAlert.length - 1]?.locationName;
-              let time = moment(tempAlert[tempAlert.length - 1]?.time)
-                .tz("Asia/Kolkata")
-                .format("hh:mm A, DD,MM,YYYY");
-              setSpeedAlertMsg({
-                location: location,
-                time: time,
-                vehicleNumber: tempAlert[tempAlert.length - 1]?.vehicle_number,
-                mID: tempAlert[tempAlert.length - 1]?.movement_id,
-              });
-              setIsSpeedAlertOpen(true);
-            }
-          }
-        }
-        if (user != "pilot" && receivedData.data?.sos === "yes") {
-          if (receivedData.data?.sos_msg && receivedData.data?.sos) {
-            let tempSOS = receivedData.data?.sos_msg;
-            if (tempSOS.length) {
-              let location = tempSOS[tempSOS.length - 1]?.locationName;
-              let time = moment(tempSOS[tempSOS.length - 1]?.time)
-                .tz("Asia/Kolkata")
-                .format("hh:mm A, DD,MM,YYYY");
-              setSpeedSOSMsg({
-                location: location,
-                time: time,
-                vehicleNumber: tempSOS[tempSOS.length - 1]?.vehicle_number,
-                mID: tempSOS[tempSOS.length - 1]?.movement_id,
-              });
-              setIsSpeedSOSOpen(true);
-            } else {
-              setIsSpeedSOSOpen(false);
-            }
-          } else {
-            setIsSpeedSOSOpen(false);
-          }
-        }
-        if (
-          receivedData.data?.alert_msg &&
-          receivedData.data?.alert_msg.length !== alertsList.length
-        ) {
-          let tempList: any = [];
-          receivedData.data?.alert_msg?.forEach((alert) => {
-            let location = alert?.locationName;
-            let time = moment(alert?.time)
-              .tz("Asia/Kolkata")
-              .format("hh:mm A, DD,MM,YYYY");
-            let vehicleNumber = alert?.vehicle_number;
-            let mID = alert?.movement_id;
-            tempList.push({
-              location: location,
-              time: time,
-              vehicleNumber: vehicleNumber,
-              mID: mID,
-            });
-          });
-          setAlertList([...tempList]);
-        }
-        if (
-          receivedData.data?.sos_msg &&
-          receivedData.data?.sos_msg.length !== sosList.length
-        ) {
-          let tempLists: any = [];
-          receivedData.data?.sos_msg?.forEach((alert: any) => {
-            let location = alert?.locationName;
-            let time = moment(alert?.time)
-              .tz("Asia/Kolkata")
-              .format("hh:mm A, DD,MM,YYYY");
-            let vehicleNumber = alert?.vehicle_number;
-            let mID = alert?.movement_id;
-            tempLists.push({
-              location: location,
-              time: time,
-              vehicleNumber: vehicleNumber,
-              mID: mID,
-            });
-          });
-          setSOSList([...tempLists]);
-        }
-      }
-    };
-    socketRef.current.onerror = (error: any) => {
-      console.error("WebSocket error:", error);
-      onDisplayNotification({
-        collapseKey: "in.epathtracking",
-        data: {
-        movement_id: currentMovement?.current?.movement_id, // Changed from "1399"
-        },
-        from: "682218916819",
-        messageId: "0:1746168764061404%d1d601b8d1d601b8",
-        notification: {
-          android: {},
-          body: error?.message,
-          title: "WebSocket error!",
-        },
-        originalPriority: 2,
-        priority: 2,
-        sentTime: 1746168764052,
-        ttl: 2419200,
-      });
-    };
+  socketRef.current.onopen = () => {
+    console.log("SOCKET OPENED");
+    setIsWebSocketConnected(true);
+    reconnectAttempts = 0;
+    sendOfflineStoredLocations();
+    isCheckSocketIsConneted.current = true;
   };
 
+  socketRef.current.onclose = async () => {
+    console.log("SOCKET CLOSED");
+    setIsWebSocketConnected(false);
+    isCheckSocketIsConneted.current = false;
+    const storedId = await getAsyncAttendanceIDs();
+    if (storedId && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++;
+      const delay = BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts); // Exponential backoff
+      reconnectTimeout = setTimeout(() => {
+        openSocketConnection();
+      }, Math.min(delay, 30000)); // Cap delay at 30s
+    } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      console.warn("Max WebSocket reconnect attempts reached.");
+      // Optionally notify user or log error
+    }
+  };
+
+  socketRef.current.onerror = (error) => {
+    console.error("WebSocket error:", error);
+  };
+};
+// ...existing code...
   const getLocation = async () => {
     // animateMarker(location.latitude, location.longitude);
     if (currentMovement?.current?.status == "ongoing" && user === "pilot") {
@@ -1384,122 +1298,110 @@ const DriverMovement = (props: Props) => {
   };
 
   // ✅ Offline locations ko store kare
-  const storeOfflineLocation = async (obj) => {
-    try {
-      let offlineData = await AsyncStorage.getItem(asyncKeys.offlineLocations);
-      let offlineDataTime = await AsyncStorage.getItem(
-        asyncKeys.offlineLocationsTime
-      );
-      let locations = offlineData ? JSON.parse(offlineData) : [];
-      let locationsTime = offlineDataTime ? JSON.parse(offlineDataTime) : {};
-      console.log("locationsTimelocationsTimelocationsTime", locationsTime);
+const storeOfflineLocation = async (obj) => {
+  try {
+    let offlineData = await AsyncStorage.getItem(asyncKeys.offlineLocations);
+    let offlineDataTime = await AsyncStorage.getItem(asyncKeys.offlineLocationsTime);
+    let locations = offlineData ? JSON.parse(offlineData) : [];
+    let locationsTime = offlineDataTime ? JSON.parse(offlineDataTime) : {};
 
-      locations.push(obj);
-      locationsTime[new Date().toISOString()] = [obj];
-      await AsyncStorage.setItem(
-        asyncKeys.offlineLocations,
-        JSON.stringify(locations)
-      );
-      await AsyncStorage.setItem(
-        asyncKeys.offlineLocationsTime,
-        JSON.stringify(locationsTime)
-      );
-      console.log("📦 Location stored offline:", obj);
-    } catch (error) {
-      console.error("❌ Error storing offline location:", error);
+    // Always store as {lat, lng}
+    const locationObj = {
+      lat: Number(obj.latitude ?? obj.lat),
+      lng: Number(obj.longitude ?? obj.lng),
+    };
+    locations.push(locationObj);
+    locationsTime[new Date().toISOString()] = [locationObj];
+
+    await AsyncStorage.setItem(asyncKeys.offlineLocations, JSON.stringify(locations));
+    await AsyncStorage.setItem(asyncKeys.offlineLocationsTime, JSON.stringify(locationsTime));
+    console.log("📦 Location stored offline:", locationObj);
+  } catch (error) {
+    console.error("❌ Error storing offline location:", error);
+  }
+};
+
+
+
+
+
+const fetchAndSendLocation = async (getLocationData) => {
+  let locationObj = null;
+  try {
+    const getLocationID = await getAsyncAttendanceIDs();
+    if (!getLocationID) {
+      console.log("⚠️ No ID found, skipping WebSocket call");
+      return;
     }
-  };
 
-  const fetchAndSendLocation = async (getLocationData) => {
-    try {
-      // const getLocationID = currentMovement?.current?.movement_id
-      const getLocationID = await getAsyncAttendanceIDs();
-      // const getLocationData = await getAsyncLocation();
-      if (!getLocationID) {
-        console.log("⚠️ No ID found, skipping WebSocket call");
-        // BackgroundTimer.stopBackgroundTimer();
-        return;
-      }
-      let obj = {
-        latitude:
-          Number(getLocationData?.latitude) ||
-          Number(getCurrentLocation?.latitude),
-        longitude:
-          Number(getLocationData?.longitude) ||
-          Number(getCurrentLocation?.longitude),
+    // Always use consistent structure
+    locationObj = {
+      latitude: Number(getLocationData?.latitude) || Number(getCurrentLocation?.latitude),
+      longitude: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
+      timestamp: new Date().toISOString()
+    };
+
+    // If online and socket is open, send immediately
+    if (isConnected && socketRef.current?.readyState === WebSocket.OPEN) {
+      // Prepare data for backend
+      let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
+        lat: i.latitude,
+        lng: i.longitude,
+      }));
+
+      const data = {
+        type: "POST",
+        movement_id: getLocationID,
+        current_lat: locationObj.latitude,
+        current_lng: locationObj.longitude,
+        sos: "no",
+        new_routes: JSON.stringify({
+          ...newRoutesObjectRef.current,
+          route: new_routes_list,
+        }),
+        movement_status: currentMovement?.current?.movement_status,
+        actual_poly_coordinatess: JSON.stringify([
+          { lat: locationObj.latitude, lng: locationObj.longitude },
+        ]),
+        actual_poly_coordinatess_timestamp: JSON.stringify({
+          [locationObj.timestamp]: [
+            { lat: locationObj.latitude, lng: locationObj.longitude },
+          ],
+        }),
       };
 
-      if (
-        socketRef.current &&
-        socketRef.current.readyState === WebSocket.OPEN &&
-        isConnected
-      ) {
-        console.log("Location fetch obj", obj);
-        getLocationSend(obj, getLocationID);
+      const jsonData = JSON.stringify(data);
+      socketRef.current.send(jsonData);
+      console.log("📤 Data Sent:", jsonData);
+    } else {
+      // If offline or socket not open, store offline
+      const offlineObj = {
+        lat: locationObj.latitude,
+        lng: locationObj.longitude,
+      };
+      await storeOfflineLocation(offlineObj);
 
-        if (
-          socketRef.current &&
-          socketRef.current.readyState === WebSocket.OPEN
-        ) {
-          let new_routes_list = newRoutesObjectRef?.current?.route?.map(
-            (i: any) => {
-              return { lat: i.latitude, lng: i.longitude };
-            }
-          );
-          const data = {
-            type: "POST",
-            movement_id: getLocationID,
-            current_lat: obj.latitude,
-            current_lng: obj.longitude,
-            sos: "no",
-            new_routes: JSON.stringify({
-              ...newRoutesObjectRef.current,
-              route: new_routes_list,
-            }),
-            movement_status: currentMovement?.current?.movement_status,
-            actual_poly_coordinatess: JSON.stringify([
-              { lat: obj.latitude, lng: obj.longitude },
-            ]),
-            actual_poly_coordinatess_timestamp: JSON.stringify({
-              [new Date().toISOString()]: [
-                { lat: obj.latitude, lng: obj.longitude },
-              ],
-            }),
-          };
-          const jsonData = JSON.stringify(data);
-          socketRef.current.send(jsonData);
-          console.log("📤 Data Sent:", jsonData);
-        }
-        // console.log("📤 Data Sent:", JSON.stringify(data));
-      } else {
-        if (
-          socketRef.current &&
-          socketRef.current.readyState !== WebSocket.OPEN
-        ) {
-          openSocketConnection();
-        }
-        console.log("⚠️ No WebSocket connection, storing offline...");
-        let obj1 = {
-          lat:
-            Number(getLocationData?.latitude) ||
-            Number(getCurrentLocation?.latitude),
-          lng:
-            Number(getLocationData?.longitude) ||
-            Number(getCurrentLocation?.longitude),
-        };
-
-        storeOfflineLocation(obj1);
-        if (
-          socketRef.current &&
-          socketRef.current.readyState !== WebSocket.OPEN
-        ) {
-          openSocketConnection();
-        }
+      // Try to reconnect WebSocket if needed
+      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+        openSocketConnection();
       }
-    } catch (error) {
-      console.error("❌ Error fetching location:", error);
+
+      // Optionally show offline indicator
+      if (typeof showOfflineIndicator === "function") {
+        showOfflineIndicator();
+      }
     }
-  };
+  } catch (error) {
+    console.error("❌ Error in fetchAndSendLocation:", error);
+    // Store failed attempts for retry
+    if (locationObj) {
+      await storeOfflineLocation({
+        lat: locationObj.latitude,
+        lng: locationObj.longitude,
+      });
+    }
+  }
+};
 
   const fetchAndSendLocationIOS = async () => {
     try {
@@ -1696,6 +1598,7 @@ const DriverMovement = (props: Props) => {
 
   const onPressStart = async () => {
     setIsLoading(true);
+    recalculateJunctionETAs();
     const obj = {
       data: {
         current_lat: currentLocation?.latitude || 0,
@@ -1720,50 +1623,50 @@ const DriverMovement = (props: Props) => {
           setTimeout(() => {
             startManualWebSocketIOS();
           }, 1000);
-          // const sleep = (time: any) =>
-          //   new Promise((resolve: any) => setTimeout(() => resolve(), time));
-          // // You can do anything in your task such as network requests, timers and so on,
-          // // as long as it doesn't touch UI. Once your task completes (i.e. the promise is resolved),
-          // // React Native will go into "paused" mode (unless there are other tasks running,
-          // // or there is a foreground app).
-          // const veryIntensiveTask = async (taskDataArguments: any) => {
-          //   // Example of an infinite loop task
-          //   const { delay } = taskDataArguments;
-          //   await new Promise(async (resolve) => {
-          //     for (let i = 0; BackgroundService.isRunning(); i++) {
-          //       console.log(i);
-          //       getLocation();
-          //       startWatchingPosition();
-          //       if (
-          //         socketRef.current &&
-          //         socketRef.current.readyState === WebSocket.CLOSED
-          //       ) {
-          //         openSocketConnection();
-          //       }
-          //       await sleep(delay);
-          //     }
-          //   });
-          // };
-          // const options = {
-          //   taskName: "E-Path",
-          //   taskTitle: "Location Service",
-          //   taskDesc: "E-Path is accessing location here",
-          //   taskIcon: {
-          //     name: "ic_launcher",
-          //     type: "mipmap",
-          //   },
-          //   color: "#000000",
-          //   linkingURI: "epath://", // Add this
-          //   parameters: {
-          //     delay: 2000,
-          //   },
-          //   // Make sure this is set to avoid the notification being cleared
-          //   stopWithTask: false,
-          //   // Use immediate behavior for Android 14+
-          //   foregroundServiceBehavior: "foreground_service_immediate",
-          // };
+          const sleep = (time: any) =>
+            new Promise((resolve: any) => setTimeout(() => resolve(), time));
+          // You can do anything in your task such as network requests, timers and so on,
+          // as long as it doesn't touch UI. Once your task completes (i.e. the promise is resolved),
+          // React Native will go into "paused" mode (unless there are other tasks running,
+          // or there is a foreground app).
+          const veryIntensiveTask = async (taskDataArguments: any) => {
+            // Example of an infinite loop task
+            const { delay } = taskDataArguments;
+            await new Promise(async (resolve) => {
+              for (let i = 0; BackgroundService.isRunning(); i++) {
+                console.log(i);
+                getLocation();
+                startWatchingPosition();
+                if (
+                  socketRef.current &&
+                  socketRef.current.readyState === WebSocket.CLOSED
+                ) {
+                  openSocketConnection();
+                }
+                await sleep(delay);
+              }
+            });
+          };
+          const options = {
+            taskName: "E-Path",
+            taskTitle: "Location Service",
+            taskDesc: "E-Path is accessing location here",
+            taskIcon: {
+              name: "ic_launcher",
+              type: "mipmap",
+            },
+            color: "#000000",
+            linkingURI: "epath://", // Add this
+            parameters: {
+              delay: 2000,
+            },
+            // Make sure this is set to avoid the notification being cleared
+            stopWithTask: false,
+            // Use immediate behavior for Android 14+
+            foregroundServiceBehavior: "foreground_service_immediate",
+          };
 
-          // await BackgroundService.start(veryIntensiveTask, options);
+          await BackgroundService.start(veryIntensiveTask, options);
         }
         if (Platform.OS === "android") {
           LocationModule?.startListening();
@@ -1773,31 +1676,31 @@ const DriverMovement = (props: Props) => {
             startManualWebSocket();
           }, 1000);
         }
-        // await ReactNativeForegroundService.add_task(
-        //   () => {
-        //     getLocation();
-        //     startWatchingPosition();
-        //     if (
-        //       socketRef.current &&
-        //       socketRef.current.readyState === WebSocket.CLOSED
-        //     ) {
-        //       openSocketConnection();
-        //     }
-        //   },
-        //   {
-        //     delay: 2000,
-        //     onLoop: true,
-        //     taskId: currentMovement?.current?.movement_id || "",
-        //     onError: (e) => {},
-        //   }
-        // );
-        // await ReactNativeForegroundService.start({
-        //   id: currentMovement?.current?.movement_id,
-        //   title: "Location Service",
-        //   message: "E-Path is accessing location here",
-        //   icon: "ic_launcher",
-        //   color: "#000000",
-        // });
+        await ReactNativeForegroundService.add_task(
+          () => {
+            getLocation();
+            startWatchingPosition();
+            if (
+              socketRef.current &&
+              socketRef.current.readyState === WebSocket.CLOSED
+            ) {
+              openSocketConnection();
+            }
+          },
+          {
+            delay: 2000,
+            onLoop: true,
+            taskId: currentMovement?.current?.movement_id || "",
+            onError: (e) => {},
+          }
+        );
+        await ReactNativeForegroundService.start({
+          id: currentMovement?.current?.movement_id,
+          title: "Location Service",
+          message: "E-Path is accessing location here",
+          icon: "ic_launcher",
+          color: "#000000",
+        });
       },
       onFailure: () => {
         setIsLoading(false);
@@ -1845,7 +1748,7 @@ const DriverMovement = (props: Props) => {
           removeAsyncAttendanceIDs();
           LocationManagerModule.stopLocationSharing();
           BackgroundTimer.stopBackgroundTimer();
-          // await BackgroundService.stop();
+          await BackgroundService.stop();
         }
         if (Platform.OS == "android") {
           // setAsyncAttendanceIDs(null);
@@ -1857,10 +1760,10 @@ const DriverMovement = (props: Props) => {
           LocationModule.stopListening();
           NativeModules.LocationModule.stopLocation();
           // Stop Background Timer after 10 seconds
-          // BackgroundTimer.stopBackgroundTimer();
+          BackgroundTimer.stopBackgroundTimer();
         }
-        // ReactNativeForegroundService.remove_all_tasks();
-        // ReactNativeForegroundService.stopAll();
+        ReactNativeForegroundService.remove_all_tasks();
+        ReactNativeForegroundService.stopAll();
         setTimeout(() => {
           setDriversMovementFinishedModal(true);
         }, 600);

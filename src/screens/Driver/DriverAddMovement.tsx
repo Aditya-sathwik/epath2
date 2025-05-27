@@ -207,6 +207,10 @@ const DriverAddMovement = (props: Props) => {
     );
   };
 
+
+
+  
+
   const onAddPress = async () => {
     let isGuest = await getAsyncLocationLoginInfo();
     if (vehicle === "Select Vehicle") {
