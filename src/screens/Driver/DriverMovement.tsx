@@ -439,19 +439,20 @@ const DriverMovement = (props: Props) => {
       setPlaces(JSON.parse(currentMovement?.current?.junction_eta));
     }
     // Clean up the interval and close the WebSocket connection on component unmount
-    return () => {
-      if (
-        socketRef.current &&
-        socketRef.current.readyState === WebSocket.OPEN &&
-        currentMovement?.current?.status == "ongoing"
-      ) {
-        // socketRef.current.close();
-        // isCheckSocketIsConneted.current = false;
-        if (user === "pilot") {
-          deactivateKeepAwake();
-        }
-      }
-    };
+ return () => {
+  // Only close socket if movement is finished (status == "past")
+  if (
+    socketRef.current &&
+    socketRef.current.readyState === WebSocket.OPEN &&
+    currentMovement?.current?.status == "past"
+  ) {
+    socketRef.current.close();
+    isCheckSocketIsConneted.current = false;
+    if (user === "pilot") {
+      deactivateKeepAwake();
+    }
+  }
+};
   }, []);
 
   useEffect(() => {
@@ -1360,14 +1361,15 @@ const fetchAndSendLocation = async (getLocationData) => {
           route: new_routes_list,
         }),
         movement_status: currentMovement?.current?.movement_status,
-        actual_poly_coordinatess: JSON.stringify([
-          { lat: locationObj.latitude, lng: locationObj.longitude },
-        ]),
-        actual_poly_coordinatess_timestamp: JSON.stringify({
-          [locationObj.timestamp]: [
-            { lat: locationObj.latitude, lng: locationObj.longitude },
-          ],
-        }),
+
+actual_poly_coordinatess: JSON.stringify(
+  actualCompletedRouteRef.current.map((coord: latLongProps) => ({
+    lat: Number(coord.latitude),
+    lng: Number(coord.longitude),
+  }))
+),
+actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
+
       };
 
       const jsonData = JSON.stringify(data);
@@ -1727,52 +1729,57 @@ const fetchAndSendLocation = async (getLocationData) => {
       .toString()
       .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
     setIsLoading(true);
-    const obj = {
-      data: {
-        current_lat: currentLocation?.latitude,
-        current_lng: currentLocation?.longitude,
-        status: "past",
-        movement_status: "Stop",
-        actual_travel_time: formattedDifference,
-        travel_distance: calculateTotalDistance(completedPath),
-        actual_end_time: moment(new Date()).tz("Asia/Kolkata", true).format(),
-      },
-      params: currentMovement?.current?.movement_id,
-      onSuccess: async () => {
-        setIsLoading(false);
-        removeAsyncAttendanceIDs();
-        socketRef?.current?.close();
-        Tts.speak("Movement ended");
-        setDatePickerVisibility(false);
-        if (Platform.OS == "ios") {
-          removeAsyncAttendanceIDs();
-          LocationManagerModule.stopLocationSharing();
-          BackgroundTimer.stopBackgroundTimer();
-          await BackgroundService.stop();
-        }
-        if (Platform.OS == "android") {
-          // setAsyncAttendanceIDs(null);
-          removeAsyncAttendanceIDs();
-          if (subscription) {
-            subscription.remove();
-            subscription = null;
-          }
-          LocationModule.stopListening();
-          NativeModules.LocationModule.stopLocation();
-          // Stop Background Timer after 10 seconds
-          BackgroundTimer.stopBackgroundTimer();
-        }
-        ReactNativeForegroundService.remove_all_tasks();
-        ReactNativeForegroundService.stopAll();
-        setTimeout(() => {
-          setDriversMovementFinishedModal(true);
-        }, 600);
-      },
-      onFailure: () => {
-        setIsLoading(false);
-      },
-    };
-    dispatch(updateMovementAction(obj));
+const obj = {
+  data: {
+    current_lat: currentLocation?.latitude,
+    current_lng: currentLocation?.longitude,
+    status: "past",
+    movement_status: "Stop",
+    actual_travel_time: formattedDifference,
+    travel_distance: calculateTotalDistance(completedPath),
+    actual_end_time: moment(new Date()).tz("Asia/Kolkata", true).format(),
+    actual_poly_coordinatess: JSON.stringify(
+      actualCompletedRouteRef.current.map((coord: latLongProps) => ({
+        lat: Number(coord.latitude),
+        lng: Number(coord.longitude),
+      }))
+    ),
+    actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
+  },
+  params: currentMovement?.current?.movement_id,
+  onSuccess: async () => {
+    setIsLoading(false);
+    removeAsyncAttendanceIDs();
+    socketRef?.current?.close();
+    Tts.speak("Movement ended");
+    setDatePickerVisibility(false);
+    if (Platform.OS == "ios") {
+      removeAsyncAttendanceIDs();
+      LocationManagerModule.stopLocationSharing();
+      BackgroundTimer.stopBackgroundTimer();
+      await BackgroundService.stop();
+    }
+    if (Platform.OS == "android") {
+      removeAsyncAttendanceIDs();
+      if (subscription) {
+        subscription.remove();
+        subscription = null;
+      }
+      LocationModule.stopListening();
+      NativeModules.LocationModule.stopLocation();
+      BackgroundTimer.stopBackgroundTimer();
+    }
+    ReactNativeForegroundService.remove_all_tasks();
+    ReactNativeForegroundService.stopAll();
+    setTimeout(() => {
+      setDriversMovementFinishedModal(true);
+    }, 600);
+  },
+  onFailure: () => {
+    setIsLoading(false);
+  },
+};
+dispatch(updateMovementAction(obj));
   };
 
   function onJunctionClick(junction: any) {
