@@ -22,7 +22,7 @@ import React, { useEffect, useRef, useState } from "react";
 import Geolocation from "react-native-geolocation-service";
 import { differenceInMilliseconds, parseISO } from "date-fns";
 import { useNavigation, useRoute, useTheme } from "@react-navigation/native";
-// import ReactNativeForegroundService from "@supersami/rn-foreground-service";
+import ReactNativeForegroundService from "@supersami/rn-foreground-service";
 import BackgroundService from "react-native-background-actions";
 import BackgroundTimer from "react-native-background-timer";
 
@@ -618,13 +618,11 @@ const sendOfflineStoredLocations = async () => {
     let locations = offlineData ? JSON.parse(offlineData) : [];
     let locationsTime = offlineDataTime ? JSON.parse(offlineDataTime) : {};
 
-    // Merge in-memory coordinates with offline stored ones
-    const inMemoryLocations = actualCompletedRouteRef.current.map((coord: latLongProps) => ({
+    const inMemoryLocations = existingArrayRef.current.map((coord: latLongProps) => ({
       lat: Number(coord.latitude),
       lng: Number(coord.longitude),
     }));
 
-    // Combine and remove duplicates if needed
     const mergedLocations = [...locations, ...inMemoryLocations];
 
     if (
@@ -635,6 +633,12 @@ const sendOfflineStoredLocations = async () => {
       let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
         lat: i?.latitude,
         lng: i?.longitude,
+      }));
+
+      // Update actualCompletedRouteRef with merged locations
+      actualCompletedRouteRef.current = mergedLocations.map((coord) => ({
+        latitude: coord.lat,
+        longitude: coord.lng,
       }));
 
       const data = {
@@ -655,7 +659,6 @@ const sendOfflineStoredLocations = async () => {
       socketRef.current.send(jsonData);
       console.log("📤 Sent merged offline + in-memory locations:", jsonData);
 
-      // Clear both after successful send
       await AsyncStorage.removeItem(asyncKeys.offlineLocations);
       await AsyncStorage.removeItem(asyncKeys.offlineLocationsTime);
     }
@@ -1225,78 +1228,79 @@ const openSocketConnection = () => {
     return select_places;
   }
 
-  const everyTimeGetLocation = () => {
-    if (!subscription) {
-      subscription = locationEmitter.addListener(
-        "LocationUpdate",
-        async (location) => {
-          console.log(
-            "✅ Location fetch ",
-            location?.latitude,
-            location?.longitude
-          );
-          console.log("====================================");
-          console.log("isConnected", isConnected);
-          console.log(
-            "socketRef.current.readyState",
-            socketRef?.current?.readyState
-          );
-          console.log("====================================");
-
-          const getLocationID = await getAsyncAttendanceIDs();
-          // const getLocationID = await getAsyncAttendanceIDs()
-          if (getLocationID) {
-            if (
-              socketRef.current &&
-              socketRef.current.readyState !== WebSocket.OPEN
-            ) {
-              openSocketConnection();
-            }
-          }
-          let coords = {
-            latitude: Number(location.latitude),
-            longitude: Number(location.longitude),
-            timestamp: new Date().toISOString(),
-          };
-          fetchAndSendLocation(coords);
-          dispatch({
-            type: GET_CURRENT_LOCATION,
-            payload: {
-              latitude: Number(location.latitude),
-              longitude: Number(location.longitude),
-            },
-          });
-          setAsyncLocation({
-            latitude: Number(location.latitude),
-            longitude: Number(location.longitude),
-          });
+const everyTimeGetLocation = () => {
+  if (!subscription) {
+    subscription = locationEmitter.addListener(
+      "LocationUpdate",
+      async (location) => {
+        console.log(
+          "✅ Location fetch ",
+          location?.latitude,
+          location?.longitude
+        );
+        const getLocationID = await getAsyncAttendanceIDs();
+        if (getLocationID) {
           if (
-            !prevLocation.current ||
-            prevLocation.current.latitude !== coords.latitude ||
-            prevLocation.current.longitude !== coords.longitude
+            socketRef.current &&
+            socketRef.current.readyState !== WebSocket.OPEN
           ) {
-            let newCoords = [...existingArrayRef.current, coords];
-            prevLocation.current = coords;
-            existingArrayRef.current = newCoords;
-            let output: any = {};
-            newCoords.forEach((obj) => {
-              if (!output[obj.timestamp]) {
-                output[obj.timestamp] = [];
-              }
-              output[obj.timestamp].push({
-                lat: obj?.latitude,
-                lng: obj?.longitude,
-              });
-            });
-            existingObjectRef.current = {
-              ...existingObjectRef.current,
-              ...output,
-            };
+            openSocketConnection();
           }
         }
-      );
-    }
-  };
+        let coords = {
+          latitude: Number(location.latitude),
+          longitude: Number(location.longitude),
+          timestamp: new Date().toISOString(),
+        };
+        dispatch({
+          type: GET_CURRENT_LOCATION,
+          payload: {
+            latitude: Number(location.latitude),
+            longitude: Number(location.longitude),
+          },
+        });
+        setAsyncLocation({
+          latitude: Number(location.latitude),
+          longitude: Number(location.longitude),
+        });
+
+        // Update both existingArrayRef and actualCompletedRouteRef
+        if (
+          !prevLocation.current ||
+          prevLocation.current.latitude !== coords.latitude ||
+          prevLocation.current.longitude !== coords.longitude
+        ) {
+          let newCoords = [...existingArrayRef.current, coords];
+          prevLocation.current = coords;
+          existingArrayRef.current = newCoords;
+          
+          // Synchronize actualCompletedRouteRef
+          actualCompletedRouteRef.current = [
+            ...actualCompletedRouteRef.current,
+            { latitude: coords.latitude, longitude: coords.longitude },
+          ];
+
+          let output: any = {};
+          newCoords.forEach((obj) => {
+            if (!output[obj.timestamp]) {
+              output[obj.timestamp] = [];
+            }
+            output[obj.timestamp].push({
+              lat: obj?.latitude,
+              lng: obj?.longitude,
+            });
+          });
+          existingObjectRef.current = {
+            ...existingObjectRef.current,
+            ...output,
+          };
+        }
+
+        fetchAndSendLocation(coords);
+      }
+    );
+  }
+};
 
   // ✅ Offline locations ko store kare
 const storeOfflineLocation = async (obj) => {
@@ -1335,19 +1339,22 @@ const fetchAndSendLocation = async (getLocationData) => {
       return;
     }
 
-    // Always use consistent structure
     locationObj = {
       latitude: Number(getLocationData?.latitude) || Number(getCurrentLocation?.latitude),
       longitude: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
 
-    // If online and socket is open, send immediately
     if (isConnected && socketRef.current?.readyState === WebSocket.OPEN) {
-      // Prepare data for backend
       let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
         lat: i.latitude,
         lng: i.longitude,
+      }));
+
+      // Use existingArrayRef.current for actual_poly_coordinatess to ensure consistency
+      const actualPolyCoordinates = existingArrayRef.current.map((coord: latLongProps) => ({
+        lat: Number(coord.latitude),
+        lng: Number(coord.longitude),
       }));
 
       const data = {
@@ -1361,41 +1368,25 @@ const fetchAndSendLocation = async (getLocationData) => {
           route: new_routes_list,
         }),
         movement_status: currentMovement?.current?.movement_status,
-
-actual_poly_coordinatess: JSON.stringify(
-  actualCompletedRouteRef.current.map((coord: latLongProps) => ({
-    lat: Number(coord.latitude),
-    lng: Number(coord.longitude),
-  }))
-),
-actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
-
+        actual_poly_coordinatess: JSON.stringify(actualPolyCoordinates),
+        actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
       };
 
       const jsonData = JSON.stringify(data);
       socketRef.current.send(jsonData);
       console.log("📤 Data Sent:", jsonData);
     } else {
-      // If offline or socket not open, store offline
       const offlineObj = {
         lat: locationObj.latitude,
         lng: locationObj.longitude,
       };
       await storeOfflineLocation(offlineObj);
-
-      // Try to reconnect WebSocket if needed
       if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
         openSocketConnection();
-      }
-
-      // Optionally show offline indicator
-      if (typeof showOfflineIndicator === "function") {
-        showOfflineIndicator();
       }
     }
   } catch (error) {
     console.error("❌ Error in fetchAndSendLocation:", error);
-    // Store failed attempts for retry
     if (locationObj) {
       await storeOfflineLocation({
         lat: locationObj.latitude,
@@ -1405,136 +1396,124 @@ actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
   }
 };
 
-  const fetchAndSendLocationIOS = async () => {
-    try {
-      // const getLocationID = currentMovement?.current?.movement_id
-      const getLocationID = await getAsyncAttendanceIDs();
-      // const getLocationData = await getAsyncLocation();
-      const getLocationData = await LocationManagerModule.getCurrentLocation();
+const fetchAndSendLocationIOS = async () => {
+  try {
+    const getLocationID = await getAsyncAttendanceIDs();
+    const getLocationData = await LocationManagerModule.getCurrentLocation();
 
-      let coords = {
-        latitude: Number(getLocationData.latitude),
-        longitude: Number(getLocationData.longitude),
-        timestamp: new Date().toISOString(),
-      };
-      if (
-        !prevLocation.current ||
-        prevLocation.current.latitude !== coords.latitude ||
-        prevLocation.current.longitude !== coords.longitude
-      ) {
-        let newCoords = [...existingArrayRef.current, coords];
-        prevLocation.current = coords;
-        existingArrayRef.current = newCoords;
-        let output: any = {};
-        newCoords.forEach((obj) => {
-          if (!output[obj.timestamp]) {
-            output[obj.timestamp] = [];
-          }
-          output[obj.timestamp].push({
-            lat: obj?.latitude,
-            lng: obj?.longitude,
-          });
+    let coords = {
+      latitude: Number(getLocationData.latitude),
+      longitude: Number(getLocationData.longitude),
+      timestamp: new Date().toISOString(),
+    };
+
+    // Update both existingArrayRef and actualCompletedRouteRef
+    if (
+      !prevLocation.current ||
+      prevLocation.current.latitude !== coords.latitude ||
+      prevLocation.current.longitude !== coords.longitude
+    ) {
+      let newCoords = [...existingArrayRef.current, coords];
+      prevLocation.current = coords;
+      existingArrayRef.current = newCoords;
+
+      // Synchronize actualCompletedRouteRef
+      actualCompletedRouteRef.current = [
+        ...actualCompletedRouteRef.current,
+        { latitude: coords.latitude, longitude: coords.longitude },
+      ];
+
+      let output: any = {};
+      newCoords.forEach((obj) => {
+        if (!output[obj.timestamp]) {
+          output[obj.timestamp] = [];
+        }
+        output[obj.timestamp].push({
+          lat: obj?.latitude,
+          lng: obj?.longitude,
         });
-        existingObjectRef.current = {
-          ...existingObjectRef.current,
-          ...output,
-        };
-      }
-      dispatch({
-        type: GET_CURRENT_LOCATION,
-        payload: {
-          latitude: Number(getLocationData.latitude),
-          longitude: Number(getLocationData.longitude),
-        },
       });
-      setAsyncLocation({
+      existingObjectRef.current = {
+        ...existingObjectRef.current,
+        ...output,
+      };
+    }
+
+    dispatch({
+      type: GET_CURRENT_LOCATION,
+      payload: {
         latitude: Number(getLocationData.latitude),
         longitude: Number(getLocationData.longitude),
-      });
-      if (!getLocationID || !currentMovement?.current?.movement_id) {
-        console.log("⚠️ No ID found, skipping WebSocket call");
-        BackgroundTimer.stopBackgroundTimer();
-        return;
-      }
+      },
+    });
+    setAsyncLocation({
+      latitude: Number(getLocationData.latitude),
+      longitude: Number(getLocationData.longitude),
+    });
 
-      let obj = {
-        latitude:
-          Number(getLocationData?.latitude) ||
-          Number(getCurrentLocation?.latitude),
-        longitude:
-          Number(getLocationData?.longitude) ||
-          Number(getCurrentLocation?.longitude),
+    if (!getLocationID || !currentMovement?.current?.movement_id) {
+      console.log("⚠️ No ID found, skipping WebSocket call");
+      BackgroundTimer.stopBackgroundTimer();
+      return;
+    }
+
+    let obj = {
+      latitude: Number(getLocationData?.latitude) || Number(getCurrentLocation?.latitude),
+      longitude: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
+    };
+
+    if (
+      socketRef.current &&
+      socketRef.current.readyState === WebSocket.OPEN &&
+      isConnected
+    ) {
+      console.log("Location fetch obj", obj);
+      getLocationSend(obj, getLocationID || currentMovement?.current?.movement_id);
+
+      let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
+        lat: i.latitude,
+        lng: i.longitude,
+      }));
+      const data = {
+        type: "POST",
+        movement_id: getLocationID || currentMovement?.current?.movement_id,
+        current_lat: obj.latitude,
+        current_lng: obj.longitude,
+        sos: "no",
+        new_routes: JSON.stringify({
+          ...newRoutesObjectRef.current,
+          route: new_routes_list,
+        }),
+        movement_status: currentMovement?.current?.movement_status,
+        actual_poly_coordinatess: JSON.stringify(
+          actualCompletedRouteRef.current.map((coord: latLongProps) => ({
+            lat: Number(coord.latitude),
+            lng: Number(coord.longitude),
+          }))
+        ),
+        actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
       };
-
+      const jsonData = JSON.stringify(data);
+      socketRef.current.send(jsonData);
+      console.log("📤 Data Sent:", jsonData);
+    } else {
+      console.log("⚠️ No WebSocket connection, storing offline...");
+      let obj1 = {
+        lat: Number(getLocationData?.latitude) || Number(getCurrentLocation?.latitude),
+        lng: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
+      };
+      storeOfflineLocation(obj1);
       if (
         socketRef.current &&
-        socketRef.current.readyState === WebSocket.OPEN &&
-        isConnected
+        socketRef.current.readyState !== WebSocket.OPEN
       ) {
-        console.log("Location fetch obj", obj);
-        getLocationSend(
-          obj,
-          getLocationID || currentMovement?.current?.movement_id
-        );
-
-        if (
-          socketRef.current &&
-          socketRef.current.readyState === WebSocket.OPEN
-        ) {
-          let new_routes_list = newRoutesObjectRef?.current?.route?.map(
-            (i: any) => {
-              return { lat: i.latitude, lng: i.longitude };
-            }
-          );
-          const data = {
-            type: "POST",
-            movement_id: getLocationID || currentMovement?.current?.movement_id,
-            current_lat: obj.latitude,
-            current_lng: obj.longitude,
-            sos: "no",
-            new_routes: JSON.stringify({
-              ...newRoutesObjectRef.current,
-              route: new_routes_list,
-            }),
-            movement_status: currentMovement?.current?.movement_status,
-            actual_poly_coordinatess: JSON.stringify([
-              { lat: obj.latitude, lng: obj.longitude },
-            ]),
-            actual_poly_coordinatess_timestamp: JSON.stringify({
-              [new Date().toISOString()]: [
-                { lat: obj.latitude, lng: obj.longitude },
-              ],
-            }),
-          };
-          const jsonData = JSON.stringify(data);
-          socketRef.current.send(jsonData);
-          errorToast(JSON.stringify(data?.actual_poly_coordinatess));
-          console.log("📤 Data Sent:", jsonData);
-        }
-        // console.log("📤 Data Sent:", JSON.stringify(data));
-      } else {
-        console.log("⚠️ No WebSocket connection, storing offline...");
-        let obj1 = {
-          lat:
-            Number(getLocationData?.latitude) ||
-            Number(getCurrentLocation?.latitude),
-          lng:
-            Number(getLocationData?.longitude) ||
-            Number(getCurrentLocation?.longitude),
-        };
-
-        storeOfflineLocation(obj1);
-        if (
-          socketRef.current &&
-          socketRef.current.readyState !== WebSocket.OPEN
-        ) {
-          openSocketConnection();
-        }
+        openSocketConnection();
       }
-    } catch (error) {
-      console.error("❌ Error fetching location:", error);
     }
-  };
+  } catch (error) {
+    console.error("❌ Error fetching location:", error);
+  }
+};
 
   // ✅ Har 3 second me WebSocket call kare
   const startWebSocketCalls = () => {
@@ -1711,76 +1690,70 @@ actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
     dispatch(updateMovementAction(obj));
   };
 
-  const onPressFinish = async () => {
-    const startTime = parseISO(currentMovement.current.actual_start_time);
-    const endTime = parseISO(moment().format());
+const onPressFinish = async () => {
+  const startTime = parseISO(currentMovement.current.actual_start_time);
+  const endTime = parseISO(moment().format());
+  const timeDifferenceInMilliseconds = differenceInMilliseconds(endTime, startTime);
+  const hours = Math.floor(timeDifferenceInMilliseconds / 3600000);
+  const minutes = Math.floor((timeDifferenceInMilliseconds % 3600000) / 60000);
+  const seconds = Math.floor((timeDifferenceInMilliseconds % 60000) / 1000);
+  const formattedDifference = `${hours.toString().padStart(2, "0")}:${minutes
+    .toString()
+    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  setIsLoading(true);
 
-    // Calculate the time difference in milliseconds
-    const timeDifferenceInMilliseconds = differenceInMilliseconds(
-      endTime,
-      startTime
-    );
-    const hours = Math.floor(timeDifferenceInMilliseconds / 3600000);
-    const minutes = Math.floor(
-      (timeDifferenceInMilliseconds % 3600000) / 60000
-    );
-    const seconds = Math.floor((timeDifferenceInMilliseconds % 60000) / 1000);
-    const formattedDifference = `${hours.toString().padStart(2, "0")}:${minutes
-      .toString()
-      .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-    setIsLoading(true);
-const obj = {
-  data: {
-    current_lat: currentLocation?.latitude,
-    current_lng: currentLocation?.longitude,
-    status: "past",
-    movement_status: "Stop",
-    actual_travel_time: formattedDifference,
-    travel_distance: calculateTotalDistance(completedPath),
-    actual_end_time: moment(new Date()).tz("Asia/Kolkata", true).format(),
-    actual_poly_coordinatess: JSON.stringify(
-      actualCompletedRouteRef.current.map((coord: latLongProps) => ({
-        lat: Number(coord.latitude),
-        lng: Number(coord.longitude),
-      }))
-    ),
-    actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
-  },
-  params: currentMovement?.current?.movement_id,
-  onSuccess: async () => {
-    setIsLoading(false);
-    removeAsyncAttendanceIDs();
-    socketRef?.current?.close();
-    Tts.speak("Movement ended");
-    setDatePickerVisibility(false);
-    if (Platform.OS == "ios") {
+  const actualPolyCoordinates = existingArrayRef.current.map((coord: latLongProps) => ({
+    lat: Number(coord.latitude),
+    lng: Number(coord.longitude),
+  }));
+
+  const obj = {
+    data: {
+      current_lat: currentLocation?.latitude,
+      current_lng: currentLocation?.longitude,
+      status: "past",
+      movement_status: "Stop",
+      actual_travel_time: formattedDifference,
+      travel_distance: calculateTotalDistance(existingArrayRef.current),
+      actual_end_time: moment(new Date()).tz("Asia/Kolkata", true).format(),
+      actual_poly_coordinatess: JSON.stringify(actualPolyCoordinates),
+      actual_poly_coordinatess_timestamp: JSON.stringify(existingObjectRef.current),
+    },
+    params: currentMovement?.current?.movement_id,
+    onSuccess: async () => {
+      setIsLoading(false);
       removeAsyncAttendanceIDs();
-      LocationManagerModule.stopLocationSharing();
-      BackgroundTimer.stopBackgroundTimer();
-      await BackgroundService.stop();
-    }
-    if (Platform.OS == "android") {
-      removeAsyncAttendanceIDs();
-      if (subscription) {
-        subscription.remove();
-        subscription = null;
+      socketRef?.current?.close();
+      Tts.speak("Movement ended");
+      setDatePickerVisibility(false);
+      if (Platform.OS == "ios") {
+        removeAsyncAttendanceIDs();
+        LocationManagerModule.stopLocationSharing();
+        BackgroundTimer.stopBackgroundTimer();
+        await BackgroundService.stop();
       }
-      LocationModule.stopListening();
-      NativeModules.LocationModule.stopLocation();
-      BackgroundTimer.stopBackgroundTimer();
-    }
-    ReactNativeForegroundService.remove_all_tasks();
-    ReactNativeForegroundService.stopAll();
-    setTimeout(() => {
-      setDriversMovementFinishedModal(true);
-    }, 600);
-  },
-  onFailure: () => {
-    setIsLoading(false);
-  },
-};
-dispatch(updateMovementAction(obj));
+      if (Platform.OS == "android") {
+        removeAsyncAttendanceIDs();
+        if (subscription) {
+          subscription.remove();
+          subscription = null;
+        }
+        LocationModule.stopListening();
+        NativeModules.LocationModule.stopLocation();
+        BackgroundTimer.stopBackgroundTimer();
+      }
+      ReactNativeForegroundService.remove_all_tasks();
+      ReactNativeForegroundService.stopAll();
+      setTimeout(() => {
+        setDriversMovementFinishedModal(true);
+      }, 600);
+    },
+    onFailure: () => {
+      setIsLoading(false);
+    },
   };
+  dispatch(updateMovementAction(obj));
+};
 
   function onJunctionClick(junction: any) {
     if (currentMovement?.current?.status === "ongoing") {

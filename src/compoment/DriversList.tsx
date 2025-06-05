@@ -42,7 +42,7 @@ console.log('data?.agency_id',data?.agency_id);
             />
           </TouchableOpacity>
           <Text style={styles.btnText}>
-            Status: <Text style={{ color: colors.main3f }}>Available</Text>
+            Status: <Text style={{ color: colors.main3f }}>{data?.status}</Text>
           </Text>
         </View>
       </View>
