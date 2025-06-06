@@ -8,6 +8,8 @@ import { getAgenciesDetailsAction } from "../action/commonAction";
 import { api } from "../utils/apiConstants";
 import { countAge } from "../utils/globalFunctions";
 import { useTheme } from "@react-navigation/native";
+import EditUserModal from "../screens/Driver/EditUserModal";
+
 
 const DriversList = ({ driver, onUserImagePress, data }: any) => {
   const dispatch = useAppDispatch();
