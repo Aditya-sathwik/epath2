@@ -83,8 +83,8 @@ android {
         applicationId "in.epathtracking"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 21
-        versionName "21.0"
+        versionCode 23
+        versionName "23.0"
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true
     }

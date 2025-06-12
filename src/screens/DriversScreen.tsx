@@ -38,6 +38,17 @@ const DriversScreen = (props: Props) => {
     dispatch(getPilotAction(obj));
     // dispatch(getAgenciesAction(obj));
   }, []);
+
+
+  const reloadDrivers = () => {
+  setIsLoading(true);
+  const obj = {
+    onSuccess: () => setIsLoading(false),
+    onFailure: () => setIsLoading(false),
+  };
+  dispatch(getVehicleAction(obj));
+  dispatch(getPilotAction(obj));
+};
 console.log('getPilotData',getPilotData);
 
   return (
@@ -63,12 +74,15 @@ console.log('getPilotData',getPilotData);
         <NoDataFound />
       )}
 
-      <DriversDetailsModal
-        isVisible={driversDetailsModal}
-        data={driversDetails}
-        onPressCancel={() => setDriversDetailsModal(false)}
-        driver={true}
-      />
+<DriversDetailsModal
+  isVisible={driversDetailsModal}
+  data={driversDetails}
+  onPressCancel={() => {
+    setDriversDetailsModal(false);
+    reloadDrivers(); // <-- reload data when modal closes
+  }}
+  driver={true}
+/>
     </View>
   );
 };

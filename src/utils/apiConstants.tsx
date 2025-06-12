@@ -96,6 +96,8 @@ export const api = {
   getAgencies: "api/web/location-filter-agencies/",
   addAgencies: "api/web/location-create-agency/",
   getAgenciesDetails: "api/web/location-get-agency/",
+
+  updatePilot: "api/web/location-update-pilot/",
 };
 
 export const POST = "POST";

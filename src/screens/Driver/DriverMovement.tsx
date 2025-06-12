@@ -366,6 +366,88 @@ const DriverMovement = (props: Props) => {
 
 
   // ...existing code...
+// const startWatchingPosition = () => {
+//   const successCallback = async (location: any) => {
+//     if (currentMovement?.current?.status == "ongoing" && user == "pilot") {
+//       let coords = {
+//         latitude: location?.coords?.latitude,
+//         longitude: location?.coords?.longitude,
+//         timestamp: new Date().toISOString(),
+//       };
+//       if (
+//         !prevLocation.current ||
+//         prevLocation.current.latitude !== coords.latitude ||
+//         prevLocation.current.longitude !== coords.longitude
+//       ) {
+//         let newCoords = [...existingArrayRef.current, coords];
+//         prevLocation.current = coords;
+//         existingArrayRef.current = newCoords;
+
+//         // Persist actual_poly_coordinatess to AsyncStorage for recovery after app kill/background
+//         try {
+//           // Store as array of {lat, lng}
+//           const actualPolyCoords = newCoords.map((c) => ({
+//             lat: Number(c.latitude),
+//             lng: Number(c.longitude),
+//           }));
+//           await AsyncStorage.setItem(
+//             "actualPolyCoords",
+//             JSON.stringify(actualPolyCoords)
+//           );
+//         } catch (e) {
+//           console.error("❌ Error persisting actual_poly_coordinatess:", e);
+//         }
+
+//         let output: any = {};
+//         newCoords.forEach((obj) => {
+//           if (!output[obj.timestamp]) {
+//             output[obj.timestamp] = [];
+//           }
+//           output[obj.timestamp].push({
+//             lat: obj?.latitude,
+//             lng: obj?.longitude,
+//           });
+//         });
+//         existingObjectRef.current = {
+//           ...existingObjectRef.current,
+//           ...output,
+//         };
+//       }
+//       // You can update your state or perform any other actions with the new position data here
+//     }
+//   };
+
+//   const errorCallback = (error: any) => {
+//     console.log(`Error getting location: ${error.message}`);
+//     // Handle errors here
+//   };
+
+//   const watchId = Geolocation.watchPosition(successCallback, errorCallback, {
+//     enableHighAccuracy: true,
+//     distanceFilter: 1, // Update every 1 meter
+//     interval: 2000,
+//     fastestInterval: 2000,
+//     showLocationDialog: true,
+//   });
+
+//   return watchId; // Return the watchId so it can be used for clearing the watch later
+// };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const startWatchingPosition = () => {
   const successCallback = async (location: any) => {
     if (currentMovement?.current?.status == "ongoing" && user == "pilot") {
@@ -374,52 +456,59 @@ const startWatchingPosition = () => {
         longitude: location?.coords?.longitude,
         timestamp: new Date().toISOString(),
       };
-      if (
-        !prevLocation.current ||
-        prevLocation.current.latitude !== coords.latitude ||
-        prevLocation.current.longitude !== coords.longitude
-      ) {
-        let newCoords = [...existingArrayRef.current, coords];
-        prevLocation.current = coords;
-        existingArrayRef.current = newCoords;
 
-        // Persist actual_poly_coordinatess to AsyncStorage for recovery after app kill/background
-        try {
-          // Store as array of {lat, lng}
-          const actualPolyCoords = newCoords.map((c) => ({
-            lat: Number(c.latitude),
-            lng: Number(c.longitude),
-          }));
-          await AsyncStorage.setItem(
-            "actualPolyCoords",
-            JSON.stringify(actualPolyCoords)
-          );
-        } catch (e) {
-          console.error("❌ Error persisting actual_poly_coordinatess:", e);
-        }
+      // Always store new coordinates, even if duplicate
+      let newCoords = [...existingArrayRef.current, coords];
+      existingArrayRef.current = newCoords;
 
-        let output: any = {};
-        newCoords.forEach((obj) => {
-          if (!output[obj.timestamp]) {
-            output[obj.timestamp] = [];
-          }
-          output[obj.timestamp].push({
-            lat: obj?.latitude,
-            lng: obj?.longitude,
-          });
+      // Update actual completed route
+      actualCompletedRouteRef.current = [
+        ...actualCompletedRouteRef.current,
+        { latitude: coords.latitude, longitude: coords.longitude }
+      ];
+
+      // Persist to AsyncStorage with timestamp
+      try {
+        const actualPolyCoords = newCoords.map((c) => ({
+          lat: Number(c.latitude),
+          lng: Number(c.longitude),
+          timestamp: c.timestamp // Preserve timestamp
+        }));
+        
+        await AsyncStorage.setItem(
+          "actualPolyCoords",
+          JSON.stringify(actualPolyCoords)
+        );
+
+        // Store in offline storage as well
+        await storeOfflineLocation({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          timestamp: coords.timestamp
         });
-        existingObjectRef.current = {
-          ...existingObjectRef.current,
-          ...output,
-        };
+
+      } catch (e) {
+        console.error("❌ Error persisting coordinates:", e);
       }
-      // You can update your state or perform any other actions with the new position data here
+
+      // Update timestamp-based storage
+      let output: any = {};
+      output[coords.timestamp] = [{
+        lat: coords.latitude,
+        lng: coords.longitude
+      }];
+      
+      existingObjectRef.current = {
+        ...existingObjectRef.current,
+        ...output
+      };
+
+      prevLocation.current = coords;
     }
   };
 
   const errorCallback = (error: any) => {
-    console.log(`Error getting location: ${error.message}`);
-    // Handle errors here
+    console.error(`Error getting location: ${error.message}`);
   };
 
   const watchId = Geolocation.watchPosition(successCallback, errorCallback, {
@@ -427,11 +516,15 @@ const startWatchingPosition = () => {
     distanceFilter: 1, // Update every 1 meter
     interval: 2000,
     fastestInterval: 2000,
-    showLocationDialog: true,
+    showLocationDialog: true
   });
 
-  return watchId; // Return the watchId so it can be used for clearing the watch later
+  return watchId;
 };
+
+
+
+
 
   useEffect(() => {
     const getCompleted = () => {
@@ -754,69 +847,69 @@ const startWatchingPosition = () => {
 // };
 
 
-const sendOfflineStoredLocations = async () => {
-  try {
-    let offlineData = await AsyncStorage.getItem(asyncKeys.offlineLocations);
-    let offlineDataTime = await AsyncStorage.getItem(asyncKeys.offlineLocationsTime);
-    const storedId = await getAsyncAttendanceIDs();
-    const getLocationData = await getAsyncLocation();
-    let locations = offlineData ? JSON.parse(offlineData) : [];
-    let locationsTime = offlineDataTime ? JSON.parse(offlineDataTime) : {};
+// const sendOfflineStoredLocations = async () => {
+//   try {
+//     let offlineData = await AsyncStorage.getItem(asyncKeys.offlineLocations);
+//     let offlineDataTime = await AsyncStorage.getItem(asyncKeys.offlineLocationsTime);
+//     const storedId = await getAsyncAttendanceIDs();
+//     const getLocationData = await getAsyncLocation();
+//     let locations = offlineData ? JSON.parse(offlineData) : [];
+//     let locationsTime = offlineDataTime ? JSON.parse(offlineDataTime) : {};
 
-    // Merge in-memory and offline locations for actual_poly_coordinatess
-    const inMemoryLocations = existingArrayRef.current.map((coord: latLongProps) => ({
-      lat: Number(coord.latitude),
-      lng: Number(coord.longitude),
-    }));
-    const mergedLocations = [...locations, ...inMemoryLocations];
+//     // Merge in-memory and offline locations for actual_poly_coordinatess
+//     const inMemoryLocations = existingArrayRef.current.map((coord: latLongProps) => ({
+//       lat: Number(coord.latitude),
+//       lng: Number(coord.longitude),
+//     }));
+//     const mergedLocations = [...locations, ...inMemoryLocations];
 
-    // Persist merged actual_poly_coordinatess for recovery after sync
-    await AsyncStorage.setItem("actualPolyCoords", JSON.stringify(mergedLocations));
+//     // Persist merged actual_poly_coordinatess for recovery after sync
+//     await AsyncStorage.setItem("actualPolyCoords", JSON.stringify(mergedLocations));
 
-    if (
-      mergedLocations.length > 0 &&
-      socketRef.current &&
-      socketRef.current.readyState === WebSocket.OPEN
-    ) {
-      let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
-        lat: i?.latitude,
-        lng: i?.longitude,
-      }));
+//     if (
+//       mergedLocations.length > 0 &&
+//       socketRef.current &&
+//       socketRef.current.readyState === WebSocket.OPEN
+//     ) {
+//       let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
+//         lat: i?.latitude,
+//         lng: i?.longitude,
+//       }));
 
-      // Update actualCompletedRouteRef with merged locations
-      actualCompletedRouteRef.current = mergedLocations.map((coord) => ({
-        latitude: coord.lat,
-        longitude: coord.lng,
-      }));
+//       // Update actualCompletedRouteRef with merged locations
+//       actualCompletedRouteRef.current = mergedLocations.map((coord) => ({
+//         latitude: coord.lat,
+//         longitude: coord.lng,
+//       }));
 
-      const data = {
-        type: "POST",
-        movement_id: storedId,
-        current_lat: Number(getLocationData?.latitude) || Number(getCurrentLocation?.latitude),
-        current_lng: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
-        sos: "no",
-        new_routes: JSON.stringify({
-          ...newRoutesObjectRef.current,
-          route: new_routes_list,
-        }),
-        movement_status: currentMovement?.current?.movement_status,
-        actual_poly_coordinatess: JSON.stringify(mergedLocations),
-        actual_poly_coordinatess_timestamp: JSON.stringify(locationsTime),
-      };
-      const jsonData = JSON.stringify(data);
-      socketRef.current.send(jsonData);
-      console.log("📤 Sent merged offline + in-memory locations:", jsonData);
+//       const data = {
+//         type: "POST",
+//         movement_id: storedId,
+//         current_lat: Number(getLocationData?.latitude) || Number(getCurrentLocation?.latitude),
+//         current_lng: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
+//         sos: "no",
+//         new_routes: JSON.stringify({
+//           ...newRoutesObjectRef.current,
+//           route: new_routes_list,
+//         }),
+//         movement_status: currentMovement?.current?.movement_status,
+//         actual_poly_coordinatess: JSON.stringify(mergedLocations),
+//         actual_poly_coordinatess_timestamp: JSON.stringify(locationsTime),
+//       };
+//       const jsonData = JSON.stringify(data);
+//       socketRef.current.send(jsonData);
+//       console.log("📤 Sent merged offline + in-memory locations:", jsonData);
 
-      // Clear offline data after successful send
-      await AsyncStorage.removeItem(asyncKeys.offlineLocations);
-      await AsyncStorage.removeItem(asyncKeys.offlineLocationsTime);
-      // Optionally clear actualPolyCoords if you want to reset after sync
-      // await AsyncStorage.removeItem("actualPolyCoords");
-    }
-  } catch (error) {
-    console.error("❌ Error sending offline locations:", error);
-  }
-};
+//       // Clear offline data after successful send
+//       await AsyncStorage.removeItem(asyncKeys.offlineLocations);
+//       await AsyncStorage.removeItem(asyncKeys.offlineLocationsTime);
+//       // Optionally clear actualPolyCoords if you want to reset after sync
+//       // await AsyncStorage.removeItem("actualPolyCoords");
+//     }
+//   } catch (error) {
+//     console.error("❌ Error sending offline locations:", error);
+//   }
+// };
 
 
 
@@ -1591,6 +1684,20 @@ const openSocketConnection = () => {
 // };
 
 
+// Helper function to remove duplicates
+const removeDuplicateLocations = (locations: any[]) => {
+  const seen = new Set();
+  const result = [];
+  for (const loc of locations) {
+    const key = `${loc.lat || loc.latitude},${loc.lng || loc.longitude}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(loc);
+    }
+  }
+  return result;
+};
+
 const storeOfflineLocation = async (obj) => {
   try {
     let offlineData = await AsyncStorage.getItem(asyncKeys.offlineLocations);
@@ -1603,19 +1710,24 @@ const storeOfflineLocation = async (obj) => {
       lat: Number(obj.latitude ?? obj.lat),
       lng: Number(obj.longitude ?? obj.lng),
     };
+    
+    // Add to arrays and remove duplicates
     locations.push(locationObj);
+    locations = removeDuplicateLocations(locations);
+    
     locationsTime[new Date().toISOString()] = [locationObj];
 
     await AsyncStorage.setItem(asyncKeys.offlineLocations, JSON.stringify(locations));
     await AsyncStorage.setItem(asyncKeys.offlineLocationsTime, JSON.stringify(locationsTime));
 
     // --- Persist actual_poly_coordinatess as well for recovery ---
-    // Merge with in-memory array and persist
+    // Merge with in-memory array and persist, removing duplicates
     let inMemoryCoords = existingArrayRef.current.map((coord) => ({
       lat: Number(coord.latitude),
       lng: Number(coord.longitude),
     }));
-    const mergedCoords = [...inMemoryCoords, locationObj];
+    
+    const mergedCoords = removeDuplicateLocations([...inMemoryCoords, locationObj]);
     await AsyncStorage.setItem("actualPolyCoords", JSON.stringify(mergedCoords));
 
     console.log("📦 Location stored offline:", locationObj);
@@ -1624,6 +1736,70 @@ const storeOfflineLocation = async (obj) => {
   }
 };
 
+const sendOfflineStoredLocations = async () => {
+  try {
+    let offlineData = await AsyncStorage.getItem(asyncKeys.offlineLocations);
+    let offlineDataTime = await AsyncStorage.getItem(asyncKeys.offlineLocationsTime);
+    const storedId = await getAsyncAttendanceIDs();
+    const getLocationData = await getAsyncLocation();
+    let locations = offlineData ? JSON.parse(offlineData) : [];
+    let locationsTime = offlineDataTime ? JSON.parse(offlineDataTime) : {};
+
+    // Merge in-memory and offline locations for actual_poly_coordinatess
+    const inMemoryLocations = existingArrayRef.current.map((coord: latLongProps) => ({
+      lat: Number(coord.latitude),
+      lng: Number(coord.longitude),
+    }));
+
+    // Remove duplicates from merged locations
+    const mergedLocations = removeDuplicateLocations([...locations, ...inMemoryLocations]);
+
+    // Persist merged actual_poly_coordinatess for recovery after sync
+    await AsyncStorage.setItem("actualPolyCoords", JSON.stringify(mergedLocations));
+
+    if (
+      mergedLocations.length > 0 &&
+      socketRef.current &&
+      socketRef.current.readyState === WebSocket.OPEN
+    ) {
+      let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
+        lat: i?.latitude,
+        lng: i?.longitude,
+      }));
+
+      // Update actualCompletedRouteRef with merged locations
+      actualCompletedRouteRef.current = mergedLocations.map((coord) => ({
+        latitude: coord.lat,
+        longitude: coord.lng,
+      }));
+
+      const data = {
+        type: "POST",
+        movement_id: storedId,
+        current_lat: Number(getLocationData?.latitude) || Number(getCurrentLocation?.latitude),
+        current_lng: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
+        sos: "no",
+        new_routes: JSON.stringify({
+          ...newRoutesObjectRef.current,
+          route: new_routes_list,
+        }),
+        movement_status: currentMovement?.current?.movement_status,
+        actual_poly_coordinatess: JSON.stringify(mergedLocations),
+        actual_poly_coordinatess_timestamp: JSON.stringify(locationsTime),
+      };
+      
+      const jsonData = JSON.stringify(data);
+      socketRef.current.send(jsonData);
+      console.log("📤 Sent merged offline + in-memory locations:", jsonData);
+
+      // Clear offline data after successful send
+      await AsyncStorage.removeItem(asyncKeys.offlineLocations);
+      await AsyncStorage.removeItem(asyncKeys.offlineLocationsTime);
+    }
+  } catch (error) {
+    console.error("❌ Error sending offline locations:", error);
+  }
+};
 
 const fetchAndSendLocation = async (getLocationData) => {
   let locationObj = null;
@@ -1639,6 +1815,12 @@ const fetchAndSendLocation = async (getLocationData) => {
       longitude: Number(getLocationData?.longitude) || Number(getCurrentLocation?.longitude),
       timestamp: new Date().toISOString(),
     };
+
+    // Always store location offline regardless of connection status
+    await storeOfflineLocation({
+      lat: locationObj.latitude,
+      lng: locationObj.longitude,
+    });
 
     if (isConnected && socketRef.current?.readyState === WebSocket.OPEN) {
       let new_routes_list = newRoutesObjectRef?.current?.route?.map((i: any) => ({
@@ -1671,17 +1853,14 @@ const fetchAndSendLocation = async (getLocationData) => {
       socketRef.current.send(jsonData);
       console.log("📤 Data Sent:", jsonData);
     } else {
-      const offlineObj = {
-        lat: locationObj.latitude,
-        lng: locationObj.longitude,
-      };
-      await storeOfflineLocation(offlineObj);
+      // Try to reconnect socket if not connected
       if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
         openSocketConnection();
       }
     }
   } catch (error) {
     console.error("❌ Error in fetchAndSendLocation:", error);
+    // Still try to store location even if there was an error
     if (locationObj) {
       await storeOfflineLocation({
         lat: locationObj.latitude,

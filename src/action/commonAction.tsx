@@ -6,6 +6,7 @@ import {
   GET,
   GOOGLE_MAP_API_KEY,
   PATCH,
+  PUT,
   POST,
   api,
 } from "../utils/apiConstants";
@@ -514,3 +515,42 @@ export const setDarkTheme =
         payload: data,
       });
     };
+
+
+
+    // ...existing code...
+
+export const updatePilotAction =
+  (request: {
+    id: string | number;
+    data: FormData;
+    token?: string;
+    onSuccess?: (res: any) => void;
+    onFailure?: (err: any) => void;
+  }): ThunkAction<void, RootState, unknown, AnyAction> =>
+  async (dispatch) => {
+    let headers: any = {
+      "Content-Type": "multipart/form-data",
+      Authorization: request.token ? `Bearer ${request.token}` : await getAsyncToken(),
+    };
+
+    dispatch({ type: IS_LOADING, payload: true });
+    return makeAPIRequest({
+      method: PUT,
+      url: `${api.updatePilot}${request.id}/`,
+      headers,
+      data: request.data,
+    })
+      .then(async (response: any) => {
+        dispatch({ type: IS_LOADING, payload: false });
+        if (response.status === 200 || response.status === 201) {
+          if (request.onSuccess) request.onSuccess(response.data);
+        }
+      })
+      .catch((error) => {
+        dispatch({ type: IS_LOADING, payload: false });
+        if (request.onFailure) request.onFailure(error.response);
+      });
+  };
+
+// ...existing code...
